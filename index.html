@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>  
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Compressor Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f9f9f9; padding: 10px; }
+    h1 { text-align: center; }
+    #controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 10px; }
+    #controls input[type="file"], #controls select, #controls button, #controls label, #controls input[type="number"] {
+      font-size: 1rem; padding: 5px; border-radius: 5px; border: 1px solid #ccc;
+    }
+    #resizeOptions { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin-top: 5px; }
+    #customResize { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 10px; }
+    #previewContainer { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; margin-top: 15px; }
+    .previewBox { border: 1px solid #ddd; padding: 10px; background: #fff; text-align: center; max-width: 300px; }
+    .previewBox img { max-width: 100%; height: auto; display: block; margin: auto; }
+    .downloadBtn { margin-top: 8px; display: inline-block; background: #28a745; color: white; padding: 6px 10px; border-radius: 4px; text-decoration: none; }
+    #progressBar { width: 80%; height: 10px; background: #ddd; border-radius: 5px; overflow: hidden; margin: 10px auto; display: none; }
+    #progressFill { height: 100%; width: 0%; background: #28a745; transition: width 0.3s ease; }
+    @media (max-width: 600px) {
+      #controls { flex-direction: column; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Image Compressor</h1>
+  <div id="controls">
+    <label>Choose Images: <input type="file" id="imageInput" multiple accept="image/*"></label>
+    <label>Output Format:
+      <select id="formatSelect">
+        <option value="image/jpeg">JPEG</option>
+        <option value="image/png">PNG</option>
+        <option value="image/webp">WebP</option>
+      </select>
+    </label>
+    <label>Quality:
+      <input type="range" id="qualitySlider" min="10" max="100" value="80">
+      <span id="qualityValue">80</span>%
+    </label>
+    <div id="resizeOptions">
+      <label><input type="radio" name="resizeOption" value="original" checked> Original Size</label>
+      <label><input type="radio" name="resizeOption" value="passport"> Passport (413x531)</label>
+      <label><input type="radio" name="resizeOption" value="stamp"> Stamp (100x120)</label>
+      <label><input type="radio" name="resizeOption" value="postcard"> Postcard (1200x1800)</label>
+      <label><input type="radio" name="resizeOption" value="custom"> Custom</label>
+    </div>
+    <div id="customResize">
+      <label>Width: <input type="number" id="customWidth" placeholder="px"></label>
+      <label>Height: <input type="number" id="customHeight" placeholder="px"></label>
+      <label>Orientation:
+        <select id="orientation">
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+          
+        </select>
+      </label>
+      <label>Rotate:
+            <select id="rotateAngle">
+                <option value="0">0°</option>
+                <option value="90">90°</option>
+                <option value="180">180°</option>
+                <option value="270">270°</option>
+            </select>
+         </label>
+    </div>
+    <button onclick="handleCompress()">Compress</button>
+  </div>
+  <div id="progressBar"><div id="progressFill"></div></div>
+  <div id="previewContainer"></div>
+  <button onclick="downloadAllAsZip()">Download All as ZIP</button>
+
+  <script>
+    const imageInput = document.getElementById("imageInput");
+    const formatSelect = document.getElementById("formatSelect");
+    const qualitySlider = document.getElementById("qualitySlider");
+    const qualityValue = document.getElementById("qualityValue");
+    const previewContainer = document.getElementById("previewContainer");
+    const customWidthInput = document.getElementById("customWidth");
+    const customHeightInput = document.getElementById("customHeight");
+    const orientationSelect = document.getElementById("orientation");
+    const progressBar = document.getElementById("progressBar");
+    const progressFill = document.getElementById("progressFill");
+    const rotateAngleSelect = document.getElementById("rotateAngle");
+
+    qualitySlider.addEventListener("input", () => {
+      qualityValue.textContent = qualitySlider.value;
+    });
+
+    document.body.addEventListener("dragover", (e) => e.preventDefault());
+    document.body.addEventListener("drop", (e) => {
+      e.preventDefault();
+      imageInput.files = e.dataTransfer.files;
+    });
+
+    function getResizeDimensions(option) {
+      switch (option) {
+        case 'passport': return { width: 413, height: 531 };
+        case 'stamp': return { width: 100, height: 120 };
+        case 'postcard': return { width: 1200, height: 1800 };
+        case 'custom':
+          let w = parseInt(customWidthInput.value);
+          let h = parseInt(customHeightInput.value);
+          if (orientationSelect.value === "landscape" && w < h) [w, h] = [h, w];
+          if (orientationSelect.value === "portrait" && h < w) [w, h] = [h, w];
+          return (w && h) ? { width: w, height: h } : null;
+        default: return null;
+      }
+    }
+
+    function handleCompress() {
+      previewContainer.innerHTML = "";
+      const files = imageInput.files;
+      const format = formatSelect.value;
+      const quality = parseInt(qualitySlider.value) / 100;
+      const resizeOption = document.querySelector('input[name="resizeOption"]:checked').value;
+      const resizeDims = getResizeDimensions(resizeOption);
+
+      if (!files.length) return alert("Please select at least one image.");
+
+      progressBar.style.display = "block";
+      progressFill.style.width = "0%";
+
+      Array.from(files).forEach((file, index) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+
+            //if (resizeDims) {
+            //  canvas.width = resizeDims.width;
+            //  canvas.height = resizeDims.height;
+            //  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            //} else {
+            //  canvas.width = img.width;
+            //  canvas.height = img.height;
+            //  ctx.drawImage(img, 0, 0);
+           //}
+            let angle = parseInt(rotateAngleSelect.value);
+            let width = resizeDims ? resizeDims.width : img.width;
+            let height = resizeDims ? resizeDims.height : img.height;
+
+            // Adjust canvas size based on rotation
+            if (angle === 90 || angle === 270) {
+                canvas.width = height;
+                canvas.height = width;
+                } else {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
+
+            // Apply rotation transform
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(angle * Math.PI / 180);
+
+            // Draw the image centered and rotated
+            if (angle === 90 || angle === 270) {
+                ctx.drawImage(img, -height / 2, -width / 2, height, width);
+            } else {
+                ctx.drawImage(img, -width / 2, -height / 2, width, height);
+            }
+            ctx.restore();
+
+            canvas.toBlob(blob => {
+              const url = URL.createObjectURL(blob);
+              const previewBox = document.createElement("div");
+              previewBox.className = "previewBox";
+              previewBox.innerHTML = `
+                <strong>Original:</strong> ${(file.size / 1024).toFixed(1)} KB<br>
+                <img src="${e.target.result}" alt="Original Image">
+                <strong>Compressed:</strong> ${(blob.size / 1024).toFixed(1)} KB<br>
+                <img src="${url}" alt="Compressed Image">
+                <a href="${url}" download="compressed_${index + 1}.${format.split("/")[1]}" class="downloadBtn">Download</a>
+              `;
+              previewContainer.appendChild(previewBox);
+              progressFill.style.width = `${((index + 1) / files.length) * 100}%`;
+            }, format, quality);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function downloadAllAsZip() {
+        const zip = new JSZip();
+        const downloadButtons = document.querySelectorAll(".downloadBtn");
+
+        downloadButtons.forEach((btn, index) => {
+            fetch(btn.href)
+            .then(res => res.blob())
+            .then(blob => {
+                const fileName = btn.getAttribute("download") || `image${index + 1}.jpg`;
+                zip.file(fileName, blob);
+                if (index === downloadButtons.length - 1) {
+                    setTimeout(() => {
+                        zip.generateAsync({ type: "blob" }).then(content => {
+                            saveAs(content, "compressed_images.zip");
+                        });
+                    }, 1000);
+                }
+            });
+        }); // <-- closed forEach here
+    } // <-- closed function here
+  </script>
+</body>
+</html>
